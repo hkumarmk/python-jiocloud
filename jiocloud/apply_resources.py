@@ -68,26 +68,49 @@ class ApplyResources(object):
         desired_servers = self.generate_desired_servers(resources, mappings, project_tag, number_overrides=number_overrides)
         return [elem for elem in desired_servers if elem['name'] not in existing_servers ]
 
-    def create_servers(self, servers, userdata, key_name=None):
+    def create_servers(self, servers, userdata, key_name=None, num_retry=None):
 
         ids = set()
         floating_ip_servers = set()
+        servers_dict = {}
         for s in servers:
+            servers_dict[s['name']] = s
+            servers_dict[s['name']].update({'retry': 0})
             userdata_file = file(userdata)
             server_id = self.create_server(userdata_file, key_name, **s)
             ids.add(server_id)
 
             if s.get('assign_floating_ip'):
                 floating_ip_servers.add(server_id)
-
         nova_client = self.get_nova_client()
 
         done = set()
+
+        rebuilt = set()
         while ids:
             time.sleep(5)
             for id in ids:
                 instance = nova_client.servers.get(id)
-                if instance.status != 'BUILD':
+                print "%s - %s - %s" % (instance.name, id, instance.status)
+                if  instance.status == 'ERROR' and \
+                    ( num_retry is None or servers_dict[instance.name]['retry'] < num_retry) :
+                    print "Rebuilding server %s(%s)" % (instance.name, id)
+
+                    ##
+                    # delete_server may take some time to delete, and may fail,
+                    # but that should be fine as that machine will never come
+                    # up. TODO: there should be a retry count parameter
+                    ##
+                    servers_dict[instance.name]['retry'] += 1
+                    self.delete_server(id)
+                    userdata_file = file(userdata)
+                    server_id = self.create_server(userdata_file, key_name, **servers_dict[instance.name])
+                    ids.discard(id)
+                    ids.add(server_id)
+                    if servers_dict[instance.name].has_key('assign_floating_ip'):
+                        floating_ip_servers.discard(id)
+                        floating_ip_servers.add(server_id)
+                elif instance.status != 'BUILD':
                     print "%s (%s): %s" % (instance.name, id, instance.status)
                     done.add(id)
             ids = ids.difference(done)
@@ -146,11 +169,16 @@ class ApplyResources(object):
                 ip = ip_to_server_map[uuid]
                 server.remove_floating_ip(ip.ip)
                 ips_to_delete.add(ip)
-            server.delete()
+            self.delete_server(uuid)
 
         for ip in ips_to_delete:
             print "Deleting floating ip: %s" % (ip.ip,)
             ip.delete()
+
+    def delete_server(self,server_id):
+        nova_client = self.get_nova_client()
+        server = nova_client.servers.get(server_id)
+        server.delete()
 
     def ssh_config(self, servers):
         out = ''
@@ -183,6 +211,7 @@ if __name__ == '__main__':
     apply_parser.add_argument('--mappings', help='Path to mappings file')
     apply_parser.add_argument('--project_tag', help='Project tag')
     apply_parser.add_argument('--key_name', help='Name of key pair')
+    apply_parser.add_argument('--retry', type=int, help='Retry machine boot in case of failures')
     apply_parser.add_argument('--override_instance_number', help='Override number of instances of a type. Values is e.g. "cp=5:ct=2" to start 5 cp nodes, 2 ct nodes and go with defaults for the rest')
 
     delete_parser = subparsers.add_parser('delete', help='Delete a project')
@@ -208,7 +237,9 @@ if __name__ == '__main__':
                                                     args.mappings,
                                                     project_tag=args.project_tag,
                                                     number_overrides=number_overrides)
-        apply_resources.create_servers(servers, args.userdata, key_name=args.key_name)
+        apply_resources.create_servers(servers, args.userdata,
+                                       key_name=args.key_name,
+                                       num_retry=args.retry)
     elif args.action == 'delete':
         if not args.project_tag:
             argparser.error("Must set project tag when action is delete")
