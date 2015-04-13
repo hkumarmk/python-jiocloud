@@ -91,7 +91,6 @@ class ApplyResources(object):
             time.sleep(5)
             for id in ids:
                 instance = nova_client.servers.get(id)
-                print "%s - %s - %s" % (instance.name, id, instance.status)
                 if  instance.status == 'ERROR' and \
                     ( num_retry is None or servers_dict[instance.name]['retry'] < num_retry) :
                     print "Rebuilding server %s(%s)" % (instance.name, id)
