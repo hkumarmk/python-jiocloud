@@ -196,7 +196,7 @@ class ApplyResources(object):
             ip = utils.get_ip_of_node(apply_resources.get_nova_client(),  s['name'])
             out += '    HostName %s\n' % (ip,)
             if not s.get('assign_floating_ip', False) and bastion:
-                out += '    ProxyCommand ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null %%r@%s nc %%h %%p\n' % (bastion,)
+                out += '    ProxyCommand ssh -o LogLevel=Error -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null %%r@%s nc %%h %%p\n' % (bastion,)
             out += '\n'
         return out
 
