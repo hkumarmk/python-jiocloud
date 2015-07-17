@@ -3,6 +3,7 @@ import argparse
 import IPy
 import os
 import sys
+import time
 from novaclient import client as novaclient
 
 """
@@ -30,11 +31,20 @@ def is_ipv4(ip_string):
 
 def get_ip_of_node(nova_client, name):
     ip = None
-    try:
-        servers = nova_client.servers.list()
-    except Exception as e:
-        print >> sys.stderr, 'Failed on nova list', e
-        return ''
+
+    ##
+    # Make sure it can return the node list, this will make sure get_ip_of_node
+    # will allways return the IP if the server exists
+    ##
+    while True:
+        try:
+            servers = nova_client.servers.list()
+        except Exception as e:
+            print >> sys.stderr, 'Failed on nova list', e
+        else:
+            time.sleep(5)
+            break
+
     for server in servers:
         if server.name == name:
             for network in server.networks.values():
