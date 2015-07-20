@@ -3,6 +3,7 @@ import argparse
 import IPy
 import os
 import sys
+import time
 from novaclient import client as novaclient
 
 """
@@ -28,22 +29,38 @@ def is_rfc1918(ip_string):
 def is_ipv4(ip_string):
     return IPy.IP(ip_string).version() == 4
 
-def get_ip_of_node(nova_client, name):
+def get_ip_of_node(nova_client, names):
     ip = None
-    try:
-        servers = nova_client.servers.list()
-    except Exception as e:
-        print >> sys.stderr, 'Failed on nova list', e
-        return ''
+
+    ##
+    # Make sure it can return the node list, this will make sure get_ip_of_node
+    # will allways return the IP if the server exists
+    ##
+    while True:
+        try:
+            servers = nova_client.servers.list()
+            break
+        except Exception as e:
+            print >> sys.stderr, 'Failed on nova list', e
+            time.sleep(5)
+
+    nodes = {}
+
     for server in servers:
-        if server.name == name:
+        if server.name in names:
             for network in server.networks.values():
                 for ip in network:
                     if is_ipv4(ip) and not is_rfc1918(ip):
-                        return ip
+                        nodes.update({server.name: ip})
             # Fallthrough... If none are non-rfc1918 just return whatever
-            return ip
-    raise Exception('Server not found')
+            if server.name not in nodes:
+                nodes.update({server.name: ip})
+
+    if set(names) != set(nodes.keys()):
+        raise Exception('Servers not found - %s' % list(set(names).difference(set(nodes.keys()))))
+
+    return nodes
+
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
@@ -56,4 +73,4 @@ if __name__ == '__main__':
     nova_client = get_nova_client()
 
     if args.action == 'get_ip_of_node':
-        print get_ip_of_node(nova_client, args.node_name)
+        print ''.join(get_ip_of_node(nova_client, args.node_name.split()).values())
