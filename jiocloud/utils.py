@@ -39,11 +39,10 @@ def get_ip_of_node(nova_client, names):
     while True:
         try:
             servers = nova_client.servers.list()
+            break
         except Exception as e:
             print >> sys.stderr, 'Failed on nova list', e
-        else:
             time.sleep(5)
-            break
 
     nodes = {}
 
