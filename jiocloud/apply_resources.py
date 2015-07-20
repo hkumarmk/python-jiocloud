@@ -176,27 +176,30 @@ class ApplyResources(object):
             print "Deleting floating ip: %s" % (ip.ip,)
             ip.delete()
 
+
     def delete_server(self,server_id):
         nova_client = self.get_nova_client()
         server = nova_client.servers.get(server_id)
         server.delete()
 
+
     def ssh_config(self, servers):
         out = ''
-        bastions = filter(lambda s:s.get('assign_floating_ip', False), servers)
+        nodes_details = utils.get_ip_of_node(self.get_nova_client(), [x['name'] for x in servers])
+        bastions = [x['name'] for x in filter(lambda s:s.get('assign_floating_ip', False), servers)]
+
         if bastions:
-            bastion = utils.get_ip_of_node(self.get_nova_client(), bastions[0]['name'])
+            bastion = nodes_details[bastions[0]]
         else:
             bastion = None
 
         out += 'StrictHostKeyChecking no\n'
         out += 'UserKnownHostsFile /dev/null\n'
         out += '\n'
-        for s in servers:
-            out += 'Host %s\n' % (s['name'],)
-            ip = utils.get_ip_of_node(apply_resources.get_nova_client(),  s['name'])
-            out += '    HostName %s\n' % (ip,)
-            if not s.get('assign_floating_ip', False) and bastion:
+
+        for (node, ip) in nodes_details.iteritems():
+            out += 'Host %s\n    HostName %s\n' % (node,ip)
+            if node not in bastions:
                 out += '    ProxyCommand ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null %%r@%s nc %%h %%p\n' % (bastion,)
             out += '\n'
         return out
