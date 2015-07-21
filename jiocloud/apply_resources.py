@@ -35,7 +35,15 @@ class ApplyResources(object):
         """
         # NOTE we should check for servers only in a certain state
         nova_client = self.get_nova_client()
-        servers = nova_client.servers.list()
+
+        while True:
+            try:
+                servers = nova_client.servers.list()
+                break
+            except Exception as e:
+                print 'Failed on nova list', e
+                time.sleep(5)
+
         if project_tag:
             servers = [elem for elem in servers if elem.name.endswith('_' + project_tag) ]
         return [getattr(s, attr_name) for s in servers]
