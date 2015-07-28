@@ -5,6 +5,8 @@ import time
 import utils
 import yaml
 from novaclient import client as novaclient
+from novaclient import exceptions as novacexceptions
+import requests
 
 """
 Parses a specification of nodes to install and makes it so
@@ -77,7 +79,12 @@ class ApplyResources(object):
             servers_dict[s['name']] = s
             servers_dict[s['name']].update({'retry': 0})
             userdata_file = file(userdata)
-            server_id = self.create_server(userdata_file, key_name, **s)
+            while True:
+                try:
+                    server_id = self.create_server(userdata_file, key_name, **s)
+                    break
+                except (requests.ConnectionError, novacexceptions.ClientException) as e:
+                    print e
             ids.add(server_id)
 
             if s.get('assign_floating_ip'):
@@ -160,8 +167,21 @@ class ApplyResources(object):
 
     def delete_servers(self, project_tag):
         nova_client = self.get_nova_client()
-        servers = self.get_existing_servers(project_tag=project_tag, attr_name='id')
-        ip_to_server_map = {ip.instance_id: ip for ip in nova_client.floating_ips.list()}
+        # The whole call is already in a retry
+        # The below retries are redundant but help to keep 
+        # the retry loops smaller
+        while True:
+            try:
+                servers = self.get_existing_servers(project_tag=project_tag, attr_name='id')
+                break
+            except (requests.ConnectionError, novacexceptions.ClientException) as e:
+                print e
+        while True:
+            try:
+                ip_to_server_map = {ip.instance_id: ip for ip in nova_client.floating_ips.list()}
+                break
+            except (requests.ConnectionError, novacexceptions.ClientException) as e:
+                print e
         ips_to_delete = set()
         for uuid in servers:
             print "Deleting uuid: %s"%(uuid)
@@ -237,17 +257,32 @@ if __name__ == '__main__':
             number_overrides = {a:int(b) for (a, b) in [x.split('=') for x in args.override_instance_number.split(':')]}
         else:
             number_overrides = {}
-        servers = apply_resources.servers_to_create(args.resource_file_path,
+        while True:
+            try:
+                servers = apply_resources.servers_to_create(args.resource_file_path,
                                                     args.mappings,
                                                     project_tag=args.project_tag,
                                                     number_overrides=number_overrides)
-        apply_resources.create_servers(servers, args.userdata,
+                break
+            except (requests.ConnectionError, novacexceptions.ClientException) as e:
+                print e
+        while True:
+            try:
+                apply_resources.create_servers(servers, args.userdata,
                                        key_name=args.key_name,
                                        num_retry=args.retry)
+                break
+            except (requests.ConnectionError, novacexceptions.ClientException) as e:
+                print e
     elif args.action == 'delete':
         if not args.project_tag:
             argparser.error("Must set project tag when action is delete")
-        ApplyResources().delete_servers(project_tag=args.project_tag)
+        while True:
+            try:
+                ApplyResources().delete_servers(project_tag=args.project_tag)
+                break
+            except (requests.ConnectionError, novacexceptions.ClientException) as e:
+                print e
     elif args.action == 'list':
         apply_resources = ApplyResources()
         resources = apply_resources.read_resources(args.resource_file_path)
