@@ -263,11 +263,6 @@ if __name__ == '__main__':
                                                     args.mappings,
                                                     project_tag=args.project_tag,
                                                     number_overrides=number_overrides)
-                break
-            except (requests.ConnectionError, novacexceptions.ClientException) as e:
-                print e
-        while True:
-            try:
                 apply_resources.create_servers(servers, args.userdata,
                                        key_name=args.key_name,
                                        num_retry=args.retry)
