@@ -50,6 +50,45 @@ class DeploymentOrchestrator(object):
     def trigger_update(self, new_version):
         self.consul.kv.set('/current_version', new_version)
 
+    # add k/v for nodes,roles, or globally for either configuration state
+    # or upgarde versions. This is intended to allow for different override levels
+    # to control whether or not puppet runs or versions updates
+    def manage_config(self, action_type, scope, data, name=None):
+        if not any(action_type in s for s in ['state', 'version']):
+            print "Invalid action type: %s" % action_type
+            return False
+        if not any(scope in s for s in ['global', 'role', 'host']):
+           print "Invalid scope type: %s" % scope
+           return False
+        if name is None:
+            if scope == 'global':
+                name_url = ''
+            else:
+                print 'name must be passed if scope is not global'
+                return False
+        else:
+            name_url = '/' + name
+        self.consul.kv.set("/config_%s/%s%s" % (action_type, scope, name_url) , data)
+        return data
+
+    # get the value for a host based on a lookup order in a k/v store
+    def lookup_ordered_data(self, keytype, hostname):
+        order = self.get_lookup_hash_from_hostname(hostname)
+        for x in order:
+            url = "/%s/%s%s" % (keytype, x[0], x[1])
+            #print url
+            result = self.consul.kv.get(url)
+            if result is not None:
+                return result
+        return None
+
+    def get_lookup_hash_from_hostname(self, name):
+        m = re.search('(\w+)(\d+)(-.*)?', name)
+        if m is None:
+            print "Unexpected hostname format %s" % name
+            return {}
+        return [['host', '/'+name], ['role', '/'+m.group(1)], ['global', '']]
+
     def local_health(self, hostname=socket.gethostname(), verbose=False):
         results = self.consul.health.node(hostname)
         failing = [x for x in results if (x['Status'] == 'critical'
@@ -230,6 +269,21 @@ def main(argv=sys.argv[1:]):
                                            help='Trigger an update')
     trigger_parser.add_argument('version', type=str, help='Version to deploy')
 
+    config_parser = subparsers.add_parser('manage_config',
+                                          help='Update configuration action state for a fleet'
+                                          )
+    config_parser.add_argument('config_type', type=str, help='Type of configuration to manage (version, state)')
+    config_parser.add_argument('scope', type=str, help='Scope to which update effects (global, role, host)')
+    config_parser.add_argument('data', type=str, help='Data related to update.')
+    config_parser.add_argument('--name', '-n', type=str, default=None, help='Name to apply updates to (host name, or role name, invalid for global)')
+
+    host_data_parser = subparsers.add_parser('host_data',
+                                             help='get the current value of data for a host'
+                                            )
+
+    host_data_parser.add_argument('data_type', type=str, help='Type of host data to lookup')
+    host_data_parser.add_argument('--hostname', '-n', type=str, default=socket.gethostname(), help='hostname to lookup data for')
+
     current_version_parser = subparsers.add_parser('current_version',
                                                    help='Get available version')
 
@@ -276,6 +330,10 @@ def main(argv=sys.argv[1:]):
     do = DeploymentOrchestrator(args.host, args.port)
     if args.subcmd == 'trigger_update':
         do.trigger_update(args.version)
+    elif args.subcmd == 'manage_config':
+        print do.manage_config(args.config_type, args.scope, args.data, args.name)
+    elif args.subcmd == 'host_data':
+        print do.lookup_ordered_data(args.data_type, args.hostname)
     elif args.subcmd == 'current_version':
         print do.current_version()
     elif args.subcmd == 'check_single_version':

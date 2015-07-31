@@ -197,6 +197,21 @@ class OrchestrateTests(unittest.TestCase):
             self.assertEquals(self.do.current_version(), 'v673')
             consul.return_value.kv.get.assert_called_with('/current_version')
 
+    def test_manage_config(self):
+        # test with bad data
+        self.assertFalse(self.do.manage_config('bad_type', None, None, None))
+        self.assertFalse(self.do.manage_config('state', 'bad_value', None, None))
+        self.assertFalse(self.do.manage_config('state', 'role', 'data', None))
+        with mock.patch('jiocloud.orchestrate.DeploymentOrchestrator.consul', new_callable=mock.PropertyMock) as consul:
+          self.assertEquals(self.do.manage_config('state', 'global', 'data', None), 'data')
+          consul.return_value.kv.set.assert_called_with('/config_state/global', 'data')
+
+    def test_lookup_ordered_data(self):
+        with mock.patch('jiocloud.orchestrate.DeploymentOrchestrator.consul', new_callable=mock.PropertyMock) as consul:
+            consul.return_value.kv.get.return_value = 'v673'
+            self.assertEquals(self.do.lookup_ordered_data('config_version', 'host1'), 'v673')
+            consul.return_value.kv.get.assert_called_with('/config_version/host/host1')
+
     def test_pending_update(self):
         with nested(
                 mock.patch.object(self.do, 'local_version'),
