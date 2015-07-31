@@ -50,6 +50,27 @@ class DeploymentOrchestrator(object):
     def trigger_update(self, new_version):
         self.consul.kv.set('/current_version', new_version)
 
+    # add k/v for nodes,roles, or globally for either configuration state
+    # or upgarde versions. This is intended to allow for different override levels
+    # to control whether or not puppet runs or versions updates
+    def manage_config(self, action_type, scope, data, name=None):
+        if not any(action_type in s for s in ['state', 'version']):
+            print "Invalid action type: %s" % action_type
+            return False
+        if not any(scope in s for s in ['global', 'role', 'host']):
+           print "Invalid scope type: %s" % scope
+           return False
+        if name is None:
+            if scope == 'global':
+                name_url = ''
+            else:
+                print 'name must be passed if scope is not global'
+                return False
+        else:
+            name_url = '/' + name
+        self.consul.kv.set("/config_%s/%s%s" % (action_type, scope, name_url) , data)
+        return data
+
     def local_health(self, hostname=socket.gethostname(), verbose=False):
         results = self.consul.health.node(hostname)
         failing = [x for x in results if (x['Status'] == 'critical'
@@ -230,6 +251,14 @@ def main(argv=sys.argv[1:]):
                                            help='Trigger an update')
     trigger_parser.add_argument('version', type=str, help='Version to deploy')
 
+    config_parser = subparsers.add_parser('manage_config',
+                                          help='Update configuration action state for a fleet'
+                                          )
+    config_parser.add_argument('config_type', type=str, help='Type of configuration to manage (version, state)')
+    config_parser.add_argument('scope', type=str, help='Scope to which update effects (global, role, host)')
+    config_parser.add_argument('data', type=str, help='Data related to update.')
+    config_parser.add_argument('--name', '-n', type=str, default=None, help='Name to apply updates to (host name, or role name, invalid for global)')
+
     current_version_parser = subparsers.add_parser('current_version',
                                                    help='Get available version')
 
@@ -276,6 +305,8 @@ def main(argv=sys.argv[1:]):
     do = DeploymentOrchestrator(args.host, args.port)
     if args.subcmd == 'trigger_update':
         do.trigger_update(args.version)
+    elif args.subcmd == 'manage_config':
+        print do.manage_config(args.config_type, args.scope, args.data, args.name)
     elif args.subcmd == 'current_version':
         print do.current_version()
     elif args.subcmd == 'check_single_version':
