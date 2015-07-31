@@ -71,6 +71,24 @@ class DeploymentOrchestrator(object):
         self.consul.kv.set("/config_%s/%s%s" % (action_type, scope, name_url) , data)
         return data
 
+    # get the value for a host based on a lookup order in a k/v store
+    def lookup_ordered_data(self, keytype, hostname):
+        order = self.get_lookup_hash_from_hostname(hostname)
+        for x in order:
+            url = "/%s/%s%s" % (keytype, x[0], x[1])
+            #print url
+            result = self.consul.kv.get(url)
+            if result is not None:
+                return result
+        return None
+
+    def get_lookup_hash_from_hostname(self, name):
+        m = re.search('(\w+)(\d+)(-.*)?', name)
+        if m is None:
+            print "Unexpected hostname format %s" % name
+            return {}
+        return [['host', '/'+name], ['role', '/'+m.group(1)], ['global', '']]
+
     def local_health(self, hostname=socket.gethostname(), verbose=False):
         results = self.consul.health.node(hostname)
         failing = [x for x in results if (x['Status'] == 'critical'
@@ -259,6 +277,13 @@ def main(argv=sys.argv[1:]):
     config_parser.add_argument('data', type=str, help='Data related to update.')
     config_parser.add_argument('--name', '-n', type=str, default=None, help='Name to apply updates to (host name, or role name, invalid for global)')
 
+    host_data_parser = subparsers.add_parser('host_data',
+                                             help='get the current value of data for a host'
+                                            )
+
+    host_data_parser.add_argument('data_type', type=str, help='Type of host data to lookup')
+    host_data_parser.add_argument('--hostname', '-n', type=str, default=socket.gethostname(), help='hostname to lookup data for')
+
     current_version_parser = subparsers.add_parser('current_version',
                                                    help='Get available version')
 
@@ -307,6 +332,8 @@ def main(argv=sys.argv[1:]):
         do.trigger_update(args.version)
     elif args.subcmd == 'manage_config':
         print do.manage_config(args.config_type, args.scope, args.data, args.name)
+    elif args.subcmd == 'host_data':
+        print do.lookup_ordered_data(args.data_type, args.hostname)
     elif args.subcmd == 'current_version':
         print do.current_version()
     elif args.subcmd == 'check_single_version':
