@@ -53,13 +53,13 @@ class DeploymentOrchestrator(object):
     # add k/v for nodes,roles, or globally for either configuration state
     # or upgarde versions. This is intended to allow for different override levels
     # to control whether or not puppet runs or versions updates
-    def manage_config(self, action_type, scope, data, name=None):
+    def manage_config(self, action_type, scope, data, name=None, action="set"):
         if not any(action_type in s for s in ['state', 'version']):
             print "Invalid action type: %s" % action_type
             return False
         if not any(scope in s for s in ['global', 'role', 'host']):
-           print "Invalid scope type: %s" % scope
-           return False
+            print "Invalid scope type: %s" % scope
+            return False
         if name is None:
             if scope == 'global':
                 name_url = ''
@@ -68,7 +68,10 @@ class DeploymentOrchestrator(object):
                 return False
         else:
             name_url = '/' + name
-        self.consul.kv.set("/config_%s/%s%s" % (action_type, scope, name_url) , data)
+        if action == 'set':
+            self.consul.kv.set("/config_%s/%s%s" % (action_type, scope, name_url) , data)
+        elif action == 'delete':
+            self.consul.kv.__delitem__("/config_%s/%s%s" % (action_type, scope, name_url))
         return data
 
     # get the value for a host based on a lookup order in a k/v store
@@ -76,7 +79,7 @@ class DeploymentOrchestrator(object):
         order = self.get_lookup_hash_from_hostname(hostname)
         for x in order:
             url = "/%s/%s%s" % (keytype, x[0], x[1])
-            #print url
+#             print url
             result = self.consul.kv.get(url)
             if result is not None:
                 return result
@@ -276,6 +279,7 @@ def main(argv=sys.argv[1:]):
     config_parser.add_argument('scope', type=str, help='Scope to which update effects (global, role, host)')
     config_parser.add_argument('data', type=str, help='Data related to update.')
     config_parser.add_argument('--name', '-n', type=str, default=None, help='Name to apply updates to (host name, or role name, invalid for global)')
+    config_parser.add_argument('--action', '-a', type=str, default="set", help='set or delete')
 
     host_data_parser = subparsers.add_parser('host_data',
                                              help='get the current value of data for a host'
@@ -331,7 +335,7 @@ def main(argv=sys.argv[1:]):
     if args.subcmd == 'trigger_update':
         do.trigger_update(args.version)
     elif args.subcmd == 'manage_config':
-        print do.manage_config(args.config_type, args.scope, args.data, args.name)
+        print do.manage_config(args.config_type, args.scope, args.data, args.name, args.action)
     elif args.subcmd == 'host_data':
         print do.lookup_ordered_data(args.data_type, args.hostname)
     elif args.subcmd == 'current_version':
