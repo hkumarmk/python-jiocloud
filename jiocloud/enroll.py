@@ -64,6 +64,17 @@ def p(*args):
     sys.stdout.flush()
 
 def create_node(ironic, username, password, address, mac, total_memory, total_cores):
+    ##
+    # Assuming that if a port exists with a node uuid, the node and chassis exists.
+    # Currently version of ironic we use, dont support easy ways to get details.
+    ##
+
+    port_exist = True if [a.node_uuid for a in ironic.port.list(detail=True) if a.address == mac ] else False
+
+    if port_exist:
+        p('Node and Port already exist')
+        return False
+
     p('Creating chassis.. ',)
     chassis = ironic.chassis.create()
     print(chassis.uuid)
