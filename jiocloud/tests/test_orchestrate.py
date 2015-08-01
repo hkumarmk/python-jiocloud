@@ -203,14 +203,48 @@ class OrchestrateTests(unittest.TestCase):
         self.assertFalse(self.do.manage_config('state', 'bad_value', None, None))
         self.assertFalse(self.do.manage_config('state', 'role', 'data', None))
         with mock.patch('jiocloud.orchestrate.DeploymentOrchestrator.consul', new_callable=mock.PropertyMock) as consul:
-          self.assertEquals(self.do.manage_config('state', 'global', 'data', None), 'data')
-          consul.return_value.kv.set.assert_called_with('/config_state/global', 'data')
+            self.assertEquals(self.do.manage_config('state', 'global', 'key=value', None), 'value')
+            consul.return_value.kv.set.assert_called_with('/config_state/global/key', 'value')
 
     def test_lookup_ordered_data(self):
         with mock.patch('jiocloud.orchestrate.DeploymentOrchestrator.consul', new_callable=mock.PropertyMock) as consul:
-            consul.return_value.kv.get.return_value = 'v673'
-            self.assertEquals(self.do.lookup_ordered_data('config_version', 'host1'), 'v673')
-            consul.return_value.kv.get.assert_called_with('/config_version/host/host1')
+            consul.return_value.kv.find.return_value = dict({'key':'v673'})
+            self.assertEquals(self.do.lookup_ordered_data('config_version', 'host1'), {'key':'v673'})
+            consul.return_value.kv.find.assert_called_with('/config_version/host/host1/')
+
+    def test_check_puppet(self):
+        with mock.patch('jiocloud.orchestrate.DeploymentOrchestrator.consul', new_callable=mock.PropertyMock) as consul:
+            consul.return_value.kv.find.return_value = dict({'enable_puppet':True})
+            self.assertEquals(self.do.check_puppet('node1.jiocloud.com'), 0)
+            consul.return_value.kv.find.return_value = dict({'enable_puppet':False})
+            self.assertEquals(self.do.check_puppet('node1.jiocloud.com'), 9)
+            consul.return_value.kv.find.assert_called_with('/config_state/host/node1.jiocloud.com/')
+
+    def test_enable_puppet(self):
+        with mock.patch('jiocloud.orchestrate.DeploymentOrchestrator.consul', new_callable=mock.PropertyMock) as consul:
+            consul.return_value.kv.find.return_value = dict({'enable_update':True})
+            self.assertEquals(self.do.enable_puppet('True', 'global', None,'set'), 'True')
+            consul.return_value.kv.set.assert_called_with('/config_state/global/enable_puppet','True')
+            self.assertEquals(self.do.enable_puppet('False', 'host', 'node1.jiocloud.com','set'), 'False')
+            consul.return_value.kv.set.assert_called_with('/config_state/host/node1.jiocloud.com/enable_puppet','False')
+            self.assertEquals(self.do.enable_puppet('False', 'role', 'cp','set'), 'False')
+            consul.return_value.kv.set.assert_called_with('/config_state/role/cp/enable_puppet','False')
+            self.assertEquals(self.do.enable_puppet('False', 'role', 'cp','delete'), 'False')
+            consul.return_value.kv.__delitem__.assert_called_with('/config_state/role/cp/enable_puppet')
+
+    def test_check_config(self):
+        with mock.patch('jiocloud.orchestrate.DeploymentOrchestrator.consul', new_callable=mock.PropertyMock) as consul:
+            consul.return_value.kv.find.return_value = dict({'enable_update':True})
+            self.assertEquals(self.do.check_config('enable_update', 'global', None), {'enable_update': True})
+            consul.return_value.kv.find.assert_called_with('/config_state/global/enable_update')
+
+    def test_set_config(self):
+        with mock.patch('jiocloud.orchestrate.DeploymentOrchestrator.consul', new_callable=mock.PropertyMock) as consul:
+            consul.return_value.kv.find.return_value = dict({'enable_update':True})
+            self.assertEquals(self.do.set_config('enable_update=False', 'host', 'node1.jiocloud.com'), 'False')
+            consul.return_value.kv.set.assert_called_with('/config_state/host/node1.jiocloud.com/enable_update','False')
+            self.assertEquals(self.do.set_config('enable_update=False', 'host', 'node1.jiocloud.com','state','delete'), 'False')
+            consul.return_value.kv.__delitem__.assert_called_with('/config_state/host/node1.jiocloud.com/enable_update')
 
     def test_pending_update(self):
         with nested(
