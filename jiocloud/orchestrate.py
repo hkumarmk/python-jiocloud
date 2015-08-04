@@ -60,37 +60,52 @@ class DeploymentOrchestrator(object):
         if not any(scope in s for s in ['global', 'role', 'host']):
             print "Invalid scope type: %s" % scope
             return False
-        if name is None:
-            if scope == 'global':
-                name_url = ''
-            else:
+        try:
+            cdata = data.split('=')
+            key = cdata[0]
+            data = cdata[1]
+        except IndexError:
+            print "data should be of form key=value"
+            return False
+        if name is None and scope != 'global':
                 print 'name must be passed if scope is not global'
                 return False
         else:
-            name_url = '/' + name
+            if scope == 'global':
+                name_url = '/' + key
+            else:
+                name_url = '/' + name + '/' + key
         if action == 'set':
-            self.consul.kv.set("/config_%s/%s%s" % (action_type, scope, name_url) , data)
+            self.consul.kv.set("/config_%s/%s%s" % (action_type, scope, name_url), data)
         elif action == 'delete':
             self.consul.kv.__delitem__("/config_%s/%s%s" % (action_type, scope, name_url))
         return data
 
+    ##
     # get the value for a host based on a lookup order in a k/v store
+    # Allows for multiple properties(example - enable_update, enable_puppet)
+    # at various levels
+    ##
     def lookup_ordered_data(self, keytype, hostname):
         order = self.get_lookup_hash_from_hostname(hostname)
+        ret_dict= {}
         for x in order:
-            url = "/%s/%s%s" % (keytype, x[0], x[1])
+            url = "/%s/%s%s/" % (keytype, x[0], x[1])
 #             print url
-            result = self.consul.kv.get(url)
+            result = self.consul.kv.find(url)
             if result is not None:
-                return result
-        return None
+#                 print result
+                for k in result.keys():
+                    ret_dict[k.rsplit('/',1)[-1]] = result[k]
+
+        return ret_dict
 
     def get_lookup_hash_from_hostname(self, name):
         m = re.search('(\w+)(\d+)(-.*)?', name)
         if m is None:
             print "Unexpected hostname format %s" % name
             return {}
-        return [['host', '/'+name], ['role', '/'+m.group(1)], ['global', '']]
+        return [['global', ''], ['role', '/'+m.group(1)], ['host', '/'+name] ]
 
     def local_health(self, hostname=socket.gethostname(), verbose=False):
         results = self.consul.health.node(hostname)
@@ -259,6 +274,39 @@ class DeploymentOrchestrator(object):
         else:
             print "No Hosts registered!"
 
+    def check_puppet(self, hostname):
+        data_type="config_state"
+        result = self.lookup_ordered_data(data_type, hostname)
+        try:
+            ret = str(result['enable_puppet'])
+            print ret
+            if 'rue' in ret:
+                return 0
+            else:
+                return 9
+        except KeyError:
+            # If its not set, default is true
+                return 0
+
+    def check_config(self, config_name, scope, scope_param, config_type="state"):
+        if scope == 'global':
+            url = "/config_"+config_type+"/"+scope+"/"+config_name
+        else:
+            if scope_param is None:
+                print 'name must be passed if scope is not global'
+                return False
+            url = "/config_"+config_type+"/"+scope+"/"+scope_param+"/"+config_name
+        return self.consul.kv.find(url)
+
+    ##
+    # These two functions are wrapper around manage_config for some general
+    # use cases. Leaving manage_config untouched to be used as raw consul editor
+    ##
+    def enable_puppet(self, value, scope, name, action):
+        return self.manage_config("state", scope, 'enable_puppet='+value, name, action)
+
+    def set_config(self, value, scope, name, config_type="state", action="set"):
+        return self.manage_config(config_type, scope, value, name, action)
 
 def main(argv=sys.argv[1:]):
     parser = argparse.ArgumentParser(description='Utility for '
@@ -277,7 +325,7 @@ def main(argv=sys.argv[1:]):
                                           )
     config_parser.add_argument('config_type', type=str, help='Type of configuration to manage (version, state)')
     config_parser.add_argument('scope', type=str, help='Scope to which update effects (global, role, host)')
-    config_parser.add_argument('data', type=str, help='Data related to update.')
+    config_parser.add_argument('data', type=str, help='Data related to update in format key=value')
     config_parser.add_argument('--name', '-n', type=str, default=None, help='Name to apply updates to (host name, or role name, invalid for global)')
     config_parser.add_argument('--action', '-a', type=str, default="set", help='set or delete')
 
@@ -286,7 +334,54 @@ def main(argv=sys.argv[1:]):
                                             )
 
     host_data_parser.add_argument('data_type', type=str, help='Type of host data to lookup')
-    host_data_parser.add_argument('--hostname', '-n', type=str, default=socket.gethostname(), help='hostname to lookup data for')
+    host_data_parser.add_argument('--hostname', '-n', type=str,
+                                  default=socket.gethostname(),
+                                  help='hostname to lookup data for')
+
+    check_puppet_parser = subparsers.add_parser('check_puppet',
+                                                   help='Check if puppet is enabled')
+    check_puppet_parser.add_argument('--hostname', '-n', type=str,
+                                       default=socket.gethostname(),
+                                       help='hostname to lookup data for')
+
+    enable_puppet_parser = subparsers.add_parser('enable_puppet',
+                                                   help='Enable/Disable puppet')
+    enable_puppet_parser.add_argument('value', type=str,
+                                      help='True/False')
+    enable_puppet_parser.add_argument('scope', type=str,
+                                      help='scope - host / role / global')
+    enable_puppet_parser.add_argument('--action', '-a', type=str,
+                                       default="set",
+                                       help='set / delete')
+    enable_puppet_parser.add_argument('--name', '-n', type=str,
+                                       help='role / hostname to set data for')
+
+    set_config_parser = subparsers.add_parser('set_config',
+                                                   help='set/update/delete a config')
+    set_config_parser.add_argument('value', type=str,
+                                      help='config_name=value')
+    set_config_parser.add_argument('scope', type=str,
+                                      help='scope - host / role / global')
+    set_config_parser.add_argument('--action', '-a', type=str,
+                                       default="set",
+                                       help='set / delete')
+    set_config_parser.add_argument('--name', '-n', type=str,
+                                       help='role / hostname to set data for')
+    set_config_parser.add_argument('--config_type', '-c', type=str,
+                                       default="state",
+                                       help='state / version')
+
+    check_config_parser = subparsers.add_parser('check_config',
+                                                   help='check a config value')
+    check_config_parser.add_argument('config_name', type=str,
+                                      help='config_name')
+    check_config_parser.add_argument('scope', type=str,
+                                      help='scope - host / role / global')
+    check_config_parser.add_argument('--name', '-n', type=str,
+                                       help='role / hostname to check data for')
+    check_config_parser.add_argument('--config_type', '-c', type=str,
+                                       default="state",
+                                       help='state / version')
 
     current_version_parser = subparsers.add_parser('current_version',
                                                    help='Get available version')
@@ -338,6 +433,14 @@ def main(argv=sys.argv[1:]):
         print do.manage_config(args.config_type, args.scope, args.data, args.name, args.action)
     elif args.subcmd == 'host_data':
         print do.lookup_ordered_data(args.data_type, args.hostname)
+    elif args.subcmd == 'check_puppet':
+        sys.exit(do.check_puppet(args.hostname))
+    elif args.subcmd == 'enable_puppet':
+        print do.enable_puppet(args.value, args.scope, args.name, args.action)
+    elif args.subcmd == 'check_config':
+        print do.check_config(args.config_name, args.scope, args.name, args.config_type)
+    elif args.subcmd == 'set_config':
+        print do.set_config(args.value, args.scope, args.name, args.config_type, args.action)
     elif args.subcmd == 'current_version':
         print do.current_version()
     elif args.subcmd == 'check_single_version':
