@@ -215,12 +215,13 @@ class ApplyResources(object):
 
         out += 'StrictHostKeyChecking no\n'
         out += 'UserKnownHostsFile /dev/null\n'
+        out += 'LogLevel ERROR\n'
         out += '\n'
 
         for (node, ip) in nodes_details.iteritems():
             out += 'Host %s\n    HostName %s\n' % (node,ip)
             if node not in bastions:
-                out += '    ProxyCommand ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null %%r@%s nc %%h %%p\n' % (bastion,)
+                out += '    ProxyCommand ssh -o LogLevel=ERROR -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null %%r@%s nc %%h %%p\n' % (bastion,)
             out += '\n'
         return out
 
