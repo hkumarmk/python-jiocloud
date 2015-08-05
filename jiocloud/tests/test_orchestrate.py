@@ -212,6 +212,9 @@ class OrchestrateTests(unittest.TestCase):
             self.assertEquals(self.do.lookup_ordered_data('config_version', 'host1'), {'key':'v673'})
             consul.return_value.kv.find.assert_called_with('/config_version/host/host1/')
 
+    def test_get_lookup_hash_from_hostname(self):
+        self.assertEqual(self.do.get_lookup_hash_from_hostname('host12'), [['global', ''], ['role', '/host'], ['host', '/host12']])
+
     def test_check_puppet(self):
         with mock.patch('jiocloud.orchestrate.DeploymentOrchestrator.consul', new_callable=mock.PropertyMock) as consul:
             consul.return_value.kv.find.return_value = dict({'enable_puppet':True})
