@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
 import argparse
+import	ConfigParser
 import hpilo
 from ironicclient import client
 import os
@@ -51,6 +52,13 @@ def extract_macs(net_info):
             info[str(curport)] = f['value'].replace('-', ':').lower()
     return info
 
+def extract_server_vendor_info(host_data):
+    server_vendor_info = filter(lambda x:x['type'] == 1, host_data)
+    model_name = server_vendor_info[0]['Product Name'].strip()
+    serial = server_vendor_info[0]['Serial Number'].strip()
+    return [model_name, serial]
+
+
 def get_ironic_client(username, password, auth_url, tenant_name):
     kwargs = {'os_username': username,
               'os_password': password,
@@ -59,11 +67,26 @@ def get_ironic_client(username, password, auth_url, tenant_name):
 
     return client.get_client(1, **kwargs)
 
+def read_config(f):
+    with open(f, 'r') as fp:
+        cp = ConfigParser.SafeConfigParser()
+        cp.readfp(fp)
+        return cp
+
+def config_sections(cp):
+    return cp.sections()
+
+def get_config_arch(cp,section):
+    return cp.get(section, 'architecture')
+
+def get_config_hw_type(cp,section):
+    return cp.get(section, 'hw_type')
+
 def p(*args):
     print(*args, end='')
     sys.stdout.flush()
 
-def create_node(ironic, username, password, address, mac, total_memory, total_cores):
+def create_node(ironic, username, password, address, mac, total_memory, total_cores, serial, cpu_arch, hw_type):
     ##
     # Assuming that if a port exists with a node uuid, the node and chassis exists.
     # Currently version of ironic we use, dont support easy ways to get details.
@@ -88,7 +111,9 @@ def create_node(ironic, username, password, address, mac, total_memory, total_co
                               properties={'cpus': total_cores,
                                           'memory_mb': total_memory,
                                           'local_gb': 678,
-                                          'cpu_arch': 'x86_64'}
+                                          'hwtype': hw_type,
+                                          'cpu_arch': cpu_arch,
+                                          'serial_number': serial}
                               )
     print(node.uuid)
     p('Creating port.. ',)
@@ -123,7 +148,13 @@ def main(argv=sys.argv):
                        help='ID of NIC to use')
     parser.add_argument('--noop', action='store_true',
                        help="Only pretend to add the node to Ironic")
+    parser.add_argument('--config', type=str,
+                       default='/etc/jiocloud/enroll_nodes.ini',
+                       help='Config file for enroll')
     args = parser.parse_args()
+    cp = read_config(args.config)
+    models = config_sections(cp)
+
     if (not args.os_username
         or not args.os_tenant
         or not args.os_password
@@ -137,12 +168,25 @@ def main(argv=sys.argv):
 
     ilo = get_ilo_connection(args.ilo_address, args.ilo_username, args.ilo_password)
     host_data = get_host_data(ilo)
+    [model_name, serial] = extract_server_vendor_info(host_data)
     total_memory = extract_mem_info(host_data)
     total_cores = extract_cpu_info(host_data)
     mac = extract_macs(extract_net_info(host_data))[args.nic]
+
+    if model_name in models:
+        arch = get_config_arch(cp, model_name)
+        hw_type = get_config_hw_type(cp, model_name)
+    else:
+        arch = None
+        hw_type = None
+
+    print('Server Model: %s' % model_name)
+    print('Server Serial: %s' % serial)
     print('Total memory: %d MB' % total_memory)
     print('Total cores: %d' % total_cores)
     print('MAC: %s' % mac)
+    print('Architecture: %s' % arch)
+    print('Hardware Type: %s' % hw_type)
     if args.noop:
         return True
     ironic = get_ironic_client(args.os_username, args.os_password,
@@ -175,7 +219,7 @@ def main(argv=sys.argv):
         print('deleted.')
     else:
         print('Adding to Ironic')
-        create_node(ironic, args.ilo_username, args.ilo_password, args.ilo_address, mac, total_memory, total_cores)
+        create_node(ironic, args.ilo_username, args.ilo_password, args.ilo_address, mac, total_memory, total_cores, serial, arch, hw_type)
 
 if __name__ == '__main__':
     sys.exit(not main(sys.argv))
